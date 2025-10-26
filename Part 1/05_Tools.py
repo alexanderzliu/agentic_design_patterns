@@ -1,10 +1,9 @@
-# pip install langchain langchain-openai langchain-core
+# pip install langchain langchain-openai langchain-core langgraph
 import os
 import logging
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from langchain.agents import create_react_agent, AgentExecutor
-from langchain_core.prompts import PromptTemplate
+from langgraph.prebuilt import create_react_agent
 
 # --- Best Practice: Configure Logging ---
 # A basic logging setup helps in debugging and tracking the agent's execution.
@@ -58,66 +57,37 @@ def create_llm():
         verbose=True
     )
 
-# --- 3. Create the Agent Prompt ---
-# Define the agent's role, goal, and instructions
-# This is the LangChain equivalent of CrewAI's Agent definition
-def create_agent_prompt():
-    """Create the prompt template for the agent."""
-    template = """You are a Senior Financial Analyst. Your role is to analyze stock data using provided tools and report key prices.
+# --- 3. Create the System Message ---
+# Define the agent's role and instructions using the modern approach
+def create_system_message():
+    """Create the system message for the agent."""
+    return """You are a Senior Financial Analyst. Your role is to analyze stock data using provided tools and report key prices.
 
 You are an experienced financial analyst adept at using data sources to find stock information. You provide clear, direct answers.
 
-You have access to the following tools:
+When a tool returns an error or exception, acknowledge it and report that you were unable to retrieve the requested information."""
 
-{tools}
-
-Use the following format:
-
-Question: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-Begin!
-
-Question: {input}
-Thought: {agent_scratchpad}"""
-
-    return PromptTemplate.from_template(template)
-
-# --- 4. Create the Agent ---
+# --- 4. Create the Agent Graph (LangChain 1.0 Paradigm) ---
 def create_financial_agent():
-    """Create the financial analyst agent with tools."""
+    """Create the financial analyst agent with tools using LangGraph."""
     # Initialize the LLM
     llm = create_llm()
 
     # Define the tools available to the agent
     tools = [get_stock_price]
 
-    # Create the prompt
-    prompt = create_agent_prompt()
+    # Get the system message
+    system_message = create_system_message()
 
-    # Create the ReAct agent
-    agent = create_react_agent(
-        llm=llm,
+    # Create the ReAct agent graph using LangGraph's prebuilt function
+    # This returns an executable graph, not an executor
+    agent_graph = create_react_agent(
+        model=llm,
         tools=tools,
-        prompt=prompt
+        state_modifier=system_message  # System message defines agent behavior
     )
 
-    # Create the agent executor (equivalent to CrewAI's Crew)
-    agent_executor = AgentExecutor(
-        agent=agent,
-        tools=tools,
-        verbose=True,
-        handle_parsing_errors=True,  # Handle errors gracefully
-        max_iterations=5  # Limit the number of iterations
-    )
-
-    return agent_executor
+    return agent_graph
 
 # --- 5. Run the Agent within a Main Execution Block ---
 # Using a "if __name__ == '__main__':" block is a standard Python best practice.
@@ -132,8 +102,8 @@ def main():
     print("\n## Starting the Financial Agent...")
     print("---------------------------------")
 
-    # Create the agent executor
-    agent_executor = create_financial_agent()
+    # Create the agent graph
+    agent_graph = create_financial_agent()
 
     # Define the task (equivalent to CrewAI's Task)
     task_description = (
@@ -142,12 +112,18 @@ def main():
         "If the ticker is not found, you must report that you were unable to retrieve the price."
     )
 
-    # Execute the task
-    result = agent_executor.invoke({"input": task_description})
+    # Execute the task using the graph's invoke method
+    # The new API uses "messages" instead of "input"
+    result = agent_graph.invoke(
+        {"messages": [("user", task_description)]}
+    )
 
     print("\n---------------------------------")
     print("## Agent execution finished.")
-    print("\nFinal Result:\n", result["output"])
+
+    # Extract the final message from the graph output
+    final_message = result["messages"][-1]
+    print("\nFinal Result:\n", final_message.content)
 
 if __name__ == "__main__":
     main()
